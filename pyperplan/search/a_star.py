@@ -193,3 +193,129 @@ def astar_search(
     logging.info("No operators left. Task unsolvable.")
     logging.info("%d Nodes expanded" % expansions)
     return None
+
+# Modified version for testing purpose
+import time
+
+class TimeoutError(Exception):
+    """
+    the exception class used to detect time-out error 
+    """
+    pass
+
+
+def greedy_best_first_search_test(task, heuristic, use_relaxed_plan=False, time_limit = 9999, name = None):
+    """
+    Searches for a plan in the given task using greedy best first search.
+
+    @param task The task to be solved.
+    @param heuristic A heuristic callable which computes the estimated steps
+                     from a search node to reach the goal.
+    @param time_limit: An optional parameter to allow timer to be set, unit in second. Whenever the search runs 
+                           longer than this param, the search will return class TimeoutError
+                           Default to be 9999s
+    @param name: An optional parameter for the name to be printed if timeout
+                           Default to be None
+    """
+    return astar_search_test(
+        task, heuristic, ordered_node_greedy_best_first, use_relaxed_plan, time_limit, name
+    )
+
+
+def astar_search_test(
+    task, heuristic, make_open_entry=ordered_node_astar, use_relaxed_plan=False, time_limit = 9999, name = None
+):
+    """
+    Searches for a plan in the given task using A* search.
+
+    @param task The task to be solved
+    @param heuristic  A heuristic callable which computes the estimated steps
+                      from a search node to reach the goal.
+    @param make_open_entry An optional parameter to change the bahavior of the
+                           astar search. The callable should return a search
+                           node, possible values are ordered_node_astar,
+                           ordered_node_weighted_astar and
+                           ordered_node_greedy_best_first with obvious
+                           meanings.
+    @param time_limit: An optional parameter to allow timer to be set, unit in second. Whenever the search runs 
+                           longer than this param, the search will return class TimeoutError
+    @param name: An optional parameter for the name to be printed if timeout
+    """
+    open = []
+    state_cost = {task.initial_state: 0}
+    node_tiebreaker = 0
+
+    root = searchspace.make_root_node(task.initial_state)
+    init_h = heuristic(root)
+    heapq.heappush(open, make_open_entry(root, init_h, node_tiebreaker))
+    logging.info("Initial h value: %f" % init_h)
+
+    besth = float("inf")
+    counter = 0
+    expansions = 0
+    
+    start_time = time.time()
+
+    while open:
+        (f, h, _tie, pop_node) = heapq.heappop(open)
+        if h < besth:
+            besth = h
+            logging.debug("Found new best h: %d after %d expansions" % (besth, counter))
+
+        pop_state = pop_node.state
+        # Only expand the node if its associated cost (g value) is the lowest
+        # cost known for this state. Otherwise we already found a cheaper
+        # path after creating this node and hence can disregard it.
+        if state_cost[pop_state] == pop_node.g:
+            expansions += 1
+
+            if task.goal_reached(pop_state):
+                logging.info("Goal reached. Start extraction of solution.")
+                logging.info("%d Nodes expanded" % expansions)
+                return pop_node.extract_solution()
+            rplan = None
+            if use_relaxed_plan:
+                (rh, rplan) = heuristic.calc_h_with_plan(
+                    searchspace.make_root_node(pop_state)
+                )
+                logging.debug("relaxed plan %s " % rplan)
+
+            for op, succ_state in task.get_successor_states(pop_state):
+                if use_relaxed_plan:
+                    if rplan and not op.name in rplan:
+                        # ignore this operator if we use the relaxed plan
+                        # criterion
+                        logging.debug(
+                            "removing operator %s << not a "
+                            "preferred operator" % op.name
+                        )
+                        continue
+                    else:
+                        logging.debug("keeping operator %s" % op.name)
+
+                succ_node = searchspace.make_child_node(pop_node, op, succ_state)
+                h = heuristic(succ_node)
+                if h == float("inf"):
+                    # don't bother with states that can't reach the goal anyway
+                    continue
+                old_succ_g = state_cost.get(succ_state, float("inf"))
+                if succ_node.g < old_succ_g:
+                    # We either never saw succ_state before, or we found a
+                    # cheaper path to succ_state than previously.
+                    node_tiebreaker += 1
+                    heapq.heappush(open, make_open_entry(succ_node, h, node_tiebreaker))
+                    state_cost[succ_state] = succ_node.g
+        counter += 1
+        # this part is to ensure the timeout is raised
+        elapsed_time = time.time() - start_time
+        if elapsed_time > time_limit:
+            t_out = ""
+            if name is not None:
+                t_out = name
+            else:
+                t_out = "Search"
+            raise TimeoutError(f"Timeout for: '{t_out}' at time_limit = {time_limit} seconds")
+            
+    logging.info("No operators left. Task unsolvable.")
+    logging.info("%d Nodes expanded" % expansions)
+    return None
